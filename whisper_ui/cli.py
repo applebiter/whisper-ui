@@ -150,10 +150,14 @@ def _cmd_transcribe(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="whisper-ui",
-        description="WhisperUI — transcribe or translate audio/video files.",
+        description=(
+            "WhisperUI — transcribe or translate audio/video files using OpenAI Whisper.\n"
+            "Run without arguments to launch the graphical interface."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "examples:\n"
+            "  python main.py                                            # launch GUI\n"
             "  python main.py transcribe interview.mp3\n"
             "  python main.py transcribe lecture.mp4 --model large-v3 --format srt\n"
             "  python main.py transcribe audio.wav --task translate --output english.txt\n"
