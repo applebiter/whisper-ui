@@ -10,8 +10,9 @@ build/
 *.egg
 .eggs/
 
-# Virtual environment
+# Virtual environments
 .venv/
+.venv-cpu/
 venv/
 env/
 

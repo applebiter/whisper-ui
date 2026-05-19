@@ -29,21 +29,41 @@ for arg in "$@"; do
     esac
 done
 
-# ── Activate virtualenv ───────────────────────────────────────────────────────
-if [[ ! -f ".venv/bin/activate" ]]; then
-    echo "ERROR: .venv not found." >&2
-    echo "  python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt" >&2
-    exit 1
+# ── Choose / prepare virtualenv ──────────────────────────────────────────────
+if [[ "$SLIM" -eq 1 ]]; then
+    # The slim build requires a CPU-only PyTorch install.  A CUDA-enabled torch
+    # has hard ELF dependencies on libcublasLt (~517 MB) and libcusparseLt
+    # (~224 MB) that cannot be stripped — making binary-level filtering useless.
+    # We keep a separate lightweight venv for this purpose.
+    CPU_VENV=".venv-cpu"
+    if [[ ! -f "$CPU_VENV/bin/activate" ]]; then
+        echo "Creating CPU-only build environment ($CPU_VENV) — one-time setup…"
+        python -m venv "$CPU_VENV"
+        # shellcheck disable=SC1090
+        source "$CPU_VENV/bin/activate"
+        # Install CPU torch first so nothing pulls in the CUDA wheel
+        pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet
+        # Install remaining deps (torch is already satisfied, so it won't be upgraded)
+        pip install PySide6 openai-whisper sounddevice soundfile numpy requests pyinstaller --quiet
+    else
+        # shellcheck disable=SC1090
+        source "$CPU_VENV/bin/activate"
+        pip install pyinstaller --quiet
+    fi
+else
+    if [[ ! -f ".venv/bin/activate" ]]; then
+        echo "ERROR: .venv not found." >&2
+        echo "  python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt" >&2
+        exit 1
+    fi
+    # shellcheck disable=SC1091
+    source .venv/bin/activate
+    pip install pyinstaller --quiet
 fi
-# shellcheck disable=SC1091
-source .venv/bin/activate
-
-# Ensure PyInstaller is available
-pip install pyinstaller --quiet
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 BUILD_MODE="full (CUDA-capable)"
-[[ "$SLIM" -eq 1 ]] && BUILD_MODE="slim (CPU-only)"
+[[ "$SLIM" -eq 1 ]] && BUILD_MODE="slim (CPU-only, separate torch)"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
