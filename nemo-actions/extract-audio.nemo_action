@@ -1,0 +1,8 @@
+[Nemo Action]
+Active=true
+Name=Extract Audio
+Comment=Extract the audio track to a standalone file (MP3, FLAC, WAV, AAC, or copy)
+Exec=/home/sysadmin/.local/share/nemo/actions/extract-audio.sh %F
+Icon-Name=audio-x-generic
+Selection=Any
+Extensions=mp4;mkv;avi;mov;webm;m4v;ts;mpg;mpeg;wmv;flv;ogv;3gp;mts;m2ts;vob;f4v;divx;xvid;rmvb;
