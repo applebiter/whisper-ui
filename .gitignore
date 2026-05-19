@@ -33,6 +33,11 @@ Thumbs.db
 /tmp/
 *.wav.tmp
 
-# Distribution
+# PyInstaller build artifacts
+/build/
+/dist/
+*.spec.bak
+
+# Distribution archives
 *.tar.gz
 *.zip
