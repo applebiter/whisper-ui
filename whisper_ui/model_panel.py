@@ -13,69 +13,8 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
-from .workers import DownloadWorker, is_model_downloaded
-
-MODEL_INFO: dict[str, dict] = {
-    "tiny.en": {
-        "size": "~75 MB",
-        "description": "English-only. Fastest model — great for testing or very limited hardware.",
-    },
-    "tiny": {
-        "size": "~75 MB",
-        "description": "Multilingual. Fastest model. Good for quick tests; lower accuracy.",
-    },
-    "base.en": {
-        "size": "~142 MB",
-        "description": "English-only. Fast with reasonable accuracy.",
-    },
-    "base": {
-        "size": "~142 MB",
-        "description": "Multilingual. Fast with reasonable accuracy. A solid first choice.",
-    },
-    "small.en": {
-        "size": "~466 MB",
-        "description": "English-only. Good speed/quality balance.",
-    },
-    "small": {
-        "size": "~466 MB",
-        "description": "Multilingual. Good speed/quality balance for everyday use.",
-    },
-    "medium.en": {
-        "size": "~1.5 GB",
-        "description": "English-only. High accuracy at moderate speed.",
-    },
-    "medium": {
-        "size": "~1.5 GB",
-        "description": "Multilingual. High accuracy, slower. Needs ~5 GB RAM.",
-    },
-    "large-v1": {
-        "size": "~2.9 GB",
-        "description": "Original large model. Very high accuracy across all languages.",
-    },
-    "large-v2": {
-        "size": "~2.9 GB",
-        "description": "Improved large. Better than v1, especially for non-English.",
-    },
-    "large-v3": {
-        "size": "~2.9 GB",
-        "description": "Latest large model. Best overall accuracy in all 99 supported languages.",
-    },
-    "large": {
-        "size": "~2.9 GB",
-        "description": "Alias for large-v3. Best overall accuracy.",
-    },
-    "large-v3-turbo": {
-        "size": "~1.5 GB",
-        "description": (
-            "★ Recommended — near large-v3 accuracy at ~8× the speed. "
-            "Best quality-to-speed ratio for most users."
-        ),
-    },
-    "turbo": {
-        "size": "~1.5 GB",
-        "description": "Alias for large-v3-turbo. Near large-v3 quality at ~8× the speed.",
-    },
-}
+from .core import MODEL_INFO, is_model_downloaded
+from .workers import DownloadWorker
 
 _PREFERRED_DEFAULT = "large-v3-turbo"
 

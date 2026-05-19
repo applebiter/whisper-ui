@@ -1,4 +1,4 @@
-"""Background QThread workers: recording, model download, and transcription."""
+"""QThread workers that wrap core.py functions for use in the GUI."""
 from __future__ import annotations
 
 import os
@@ -7,28 +7,21 @@ import threading
 
 from PySide6.QtCore import QThread, Signal
 
-WHISPER_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "whisper")
+from .core import (
+    WHISPER_CACHE_DIR,
+    download_model,
+    is_model_downloaded,
+    transcribe as _core_transcribe,
+)
 
-_model_cache: dict = {}
-_model_lock = threading.Lock()
-
-
-def is_model_downloaded(model_name: str) -> bool:
-    """Return True if the model file exists in the whisper cache."""
-    try:
-        import whisper
-        url = whisper._MODELS.get(model_name, "")
-        if not url:
-            return False
-        return os.path.isfile(os.path.join(WHISPER_CACHE_DIR, os.path.basename(url)))
-    except Exception:
-        return False
+__all__ = ["WHISPER_CACHE_DIR", "is_model_downloaded", "RecordWorker",
+           "DownloadWorker", "TranscribeWorker"]
 
 
 class RecordWorker(QThread):
     """Records from the default microphone until stop() is called."""
 
-    audio_level = Signal(float)   # 0.0–1.0 RMS level for VU meter
+    audio_level = Signal(float)   # 0.0–1.0 RMS for VU meter
     finished = Signal(str)        # path to saved WAV file
     error = Signal(str)
 
@@ -38,9 +31,9 @@ class RecordWorker(QThread):
 
     def run(self):
         try:
+            import numpy as np
             import sounddevice as sd
             import soundfile as sf
-            import numpy as np
         except ImportError as exc:
             self.error.emit(
                 f"Missing dependency: {exc}\n"
@@ -52,7 +45,7 @@ class RecordWorker(QThread):
         sample_rate = 16_000
         chunks: list = []
 
-        def _callback(indata, frames, time, status):
+        def _cb(indata, frames, time, status):
             data = indata.copy()
             chunks.append(data)
             rms = float(np.sqrt(np.mean(data ** 2)))
@@ -63,7 +56,7 @@ class RecordWorker(QThread):
                 samplerate=sample_rate,
                 channels=1,
                 dtype="float32",
-                callback=_callback,
+                callback=_cb,
             ):
                 self._stop_event.wait()
 
@@ -85,10 +78,10 @@ class RecordWorker(QThread):
 
 
 class DownloadWorker(QThread):
-    """Downloads a whisper model file with streaming progress."""
+    """Downloads a whisper model, forwarding progress signals to the GUI."""
 
-    progress = Signal(int)       # 0–100 percentage
-    speed_label = Signal(str)    # human-readable speed string
+    progress = Signal(int)      # 0–100
+    speed_label = Signal(str)   # e.g. "4.2 MB/s"
     finished = Signal()
     error = Signal(str)
 
@@ -97,52 +90,22 @@ class DownloadWorker(QThread):
         self.model_name = model_name
 
     def run(self):
-        import time
+        def _cb(pct: int, speed: str):
+            self.progress.emit(pct)
+            self.speed_label.emit(speed)
 
-        dest = ""
         try:
-            import whisper
-            import requests
-
-            os.makedirs(WHISPER_CACHE_DIR, exist_ok=True)
-            url = whisper._MODELS[self.model_name]
-            dest = os.path.join(WHISPER_CACHE_DIR, os.path.basename(url))
-
-            resp = requests.get(url, stream=True, timeout=60)
-            resp.raise_for_status()
-            total = int(resp.headers.get("content-length", 0))
-            downloaded = 0
-            start = time.monotonic()
-
-            with open(dest, "wb") as fh:
-                for chunk in resp.iter_content(chunk_size=65_536):
-                    fh.write(chunk)
-                    downloaded += len(chunk)
-                    elapsed = max(time.monotonic() - start, 1e-6)
-                    if total:
-                        self.progress.emit(int(downloaded * 100 / total))
-                    bps = downloaded / elapsed
-                    if bps >= 1_048_576:
-                        self.speed_label.emit(f"{bps / 1_048_576:.1f} MB/s")
-                    else:
-                        self.speed_label.emit(f"{bps / 1024:.0f} KB/s")
-
+            download_model(self.model_name, progress_callback=_cb)
             self.finished.emit()
-
         except Exception as exc:
-            if dest and os.path.exists(dest):
-                try:
-                    os.remove(dest)
-                except OSError:
-                    pass
             self.error.emit(str(exc))
 
 
 class TranscribeWorker(QThread):
-    """Loads a whisper model (cached) and runs transcription in a thread."""
+    """Runs core.transcribe() in a thread, forwarding status and results."""
 
-    status = Signal(str)     # status messages for the UI
-    finished = Signal(dict)  # whisper result dict
+    status = Signal(str)
+    finished = Signal(dict)
     error = Signal(str)
 
     def __init__(
@@ -157,24 +120,22 @@ class TranscribeWorker(QThread):
         self.model_name = model_name
         self.audio_path = audio_path
         self.device = device
-        self.transcribe_kwargs = dict(transcribe_kwargs)
+        # Strip any GUI-only keys that core.transcribe doesn't accept
+        kw = dict(transcribe_kwargs)
+        kw.pop("verbose", None)       # we set it explicitly
+        kw.pop("vad_filter", None)    # faster-whisper only; not in openai-whisper
+        self.transcribe_kwargs = kw
 
     def run(self):
         try:
-            import whisper
-
-            cache_key = (self.model_name, self.device)
-            with _model_lock:
-                if cache_key not in _model_cache:
-                    self.status.emit(f"Loading model '{self.model_name}'…")
-                    _model_cache[cache_key] = whisper.load_model(
-                        self.model_name, device=self.device
-                    )
-
-            model = _model_cache[cache_key]
-            self.status.emit("Transcribing…")
-            result = model.transcribe(self.audio_path, **self.transcribe_kwargs)
-            self.finished.emit(dict(result))
-
+            result = _core_transcribe(
+                self.audio_path,
+                model_name=self.model_name,
+                device=self.device,
+                status_callback=self.status.emit,
+                verbose=False,
+                **self.transcribe_kwargs,
+            )
+            self.finished.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))
