@@ -103,18 +103,23 @@ a = Analysis(
 # Slim mode: strip out the pip-installed NVIDIA CUDA shared libraries.
 # The bundle will use CPU only; CUDA is not available via system libraries either.
 if SLIM:
-    _cuda_prefixes = (
-        "libcuda", "libcublas", "libcudnn", "libcufft", "libcurand",
+    _cuda_strip = (
+        "libcublas", "libcudnn", "libcufft", "libcurand",
         "libcusolver", "libcusparse", "libcupti", "libnccl",
         "libnvrtc", "libnvjitlink", "libnvshmem",
         "nvidia/", "nvidia_",
     )
+    # libcudart must be kept even in a CPU-only build: libtorch_global_deps.so
+    # has a hard ELF NEEDED entry for it and torch/__init__.py will fail to
+    # import if it is missing — even when all actual computation runs on CPU.
+    _cuda_keep = ("libcudart",)
     _before = len(a.binaries)
     a.binaries = [
         b for b in a.binaries
-        if not any(pfx in b[0].lower() for pfx in _cuda_prefixes)
+        if not any(pfx in b[0].lower() for pfx in _cuda_strip)
+        or any(k in b[0].lower() for k in _cuda_keep)
     ]
-    print(f"[slim] removed {_before - len(a.binaries)} CUDA binaries")
+    print(f"[slim] removed {_before - len(a.binaries)} CUDA binaries (kept libcudart)")
 
 # ── Package ───────────────────────────────────────────────────────────────────
 
