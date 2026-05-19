@@ -62,6 +62,9 @@ hiddenimports = [
     "tiktoken.core", "tiktoken.load", "tiktoken.model", "tiktoken.registry",
     # regex (required by tiktoken)
     "regex",
+    # numba — whisper/timing.py imports it unconditionally for DTW word-timestamps
+    "numba", "numba.core", "numba.typed", "numba.np.ufunc",
+    "llvmlite", "llvmlite.binding",
     # audio I/O
     "sounddevice", "soundfile", "_soundfile", "_cffi_backend",
     # HTTP (model download)
@@ -79,8 +82,6 @@ excludes = [
     "pytest", "doctest",
     # Triton JIT compiler (compile-time only; not needed for inference)
     "triton",
-    # numba / llvmlite (not used by our app)
-    "numba", "llvmlite",
 ]
 
 # ── Analysis ──────────────────────────────────────────────────────────────────
