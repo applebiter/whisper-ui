@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from .core import MODEL_INFO, is_model_downloaded
+from . import settings as settings_store
 from .workers import DownloadWorker
 
 _PREFERRED_DEFAULT = "large-v3-turbo"
@@ -81,6 +82,8 @@ class ModelPanel(QGroupBox):
     def _populate_combo(self):
         import whisper
 
+        saved = settings_store.load().get("whisper_model", "")
+
         self._combo.blockSignals(True)
         self._combo.clear()
         default_idx = 0
@@ -89,7 +92,7 @@ class ModelPanel(QGroupBox):
             size = info.get("size", "")
             label = f"{name}  ({size})" if size else name
             self._combo.addItem(label, userData=name)
-            if name == _PREFERRED_DEFAULT:
+            if name == (saved or _PREFERRED_DEFAULT):
                 default_idx = i
 
         self._combo.blockSignals(False)
@@ -105,6 +108,10 @@ class ModelPanel(QGroupBox):
 
         info = MODEL_INFO.get(name, {})
         self._desc_lbl.setText(info.get("description", ""))
+
+        cfg = settings_store.load()
+        cfg["whisper_model"] = name
+        settings_store.save(cfg)
 
         self._refresh_download_status(name)
         self.model_changed.emit(name)
