@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from .audio_panel import AudioPanel
+from .llm_panel import LlmPanel
 from .model_panel import ModelPanel
+from .ollama_client import OllamaWorker
 from .options_panel import OptionsPanel
 from .output_panel import OutputPanel
 from .workers import TranscribeWorker, is_model_downloaded
@@ -73,9 +75,7 @@ QTextEdit {
     border: 1px solid #3e3e42;
     border-radius: 4px;
     color: #d4d4d4;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Courier New', monospace;
     font-size: 13px;
-    line-height: 1.5;
 }
 QPushButton {
     background: #0078d4;
@@ -138,26 +138,31 @@ QScrollBar::handle:vertical {
 }
 QScrollBar::handle:vertical:hover { background: #555555; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QDialog {
+    background-color: #1e1e1e;
+    color: #cccccc;
+}
+QDialogButtonBox QPushButton { min-width: 80px; }
 """
 
 
-# ───────────────────────────────────────────────────── main window ────────────
+# ─────────────────────────────────────────────────── main window ──────────────
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self._audio_path = ""
         self._model_name = ""
-        self._worker: TranscribeWorker | None = None
+        self._transcribe_worker: TranscribeWorker | None = None
+        self._ollama_worker: OllamaWorker | None = None
         self._build_ui()
         self.setStyleSheet(_STYLE)
 
     def _build_ui(self):
         self.setWindowTitle("WhisperUI")
-        self.setMinimumSize(780, 840)
-        self.resize(940, 980)
+        self.setMinimumSize(800, 900)
+        self.resize(960, 1060)
 
-        # Scroll area so the UI works on smaller displays
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -169,13 +174,13 @@ class MainWindow(QMainWindow):
         root.setSpacing(10)
         root.setContentsMargins(14, 14, 14, 14)
 
-        # ── Model ──
+        # ── Model ──────────────────────────────────────────────────────────────
         self._model_panel = ModelPanel()
         self._model_panel.model_changed.connect(self._on_model_changed)
         self._model_panel.model_downloaded.connect(self._on_model_changed)
         root.addWidget(self._model_panel)
 
-        # ── Audio  +  Options ──
+        # ── Audio + Options ────────────────────────────────────────────────────
         mid = QHBoxLayout()
         mid.setSpacing(10)
 
@@ -189,7 +194,7 @@ class MainWindow(QMainWindow):
 
         root.addLayout(mid)
 
-        # ── Action bar ──
+        # ── Transcribe action bar ──────────────────────────────────────────────
         action = QHBoxLayout()
 
         self._transcribe_btn = QPushButton("▶   Transcribe")
@@ -211,19 +216,24 @@ class MainWindow(QMainWindow):
 
         root.addLayout(action)
 
-        # ── Output ──
+        # ── Output ────────────────────────────────────────────────────────────
         self._output_panel = OutputPanel()
+        self._output_panel.has_text_changed.connect(self._on_output_text_changed)
         root.addWidget(self._output_panel, 1)
 
-        # ── Status bar ──
+        # ── LLM formatting ────────────────────────────────────────────────────
+        self._llm_panel = LlmPanel()
+        self._llm_panel.format_requested.connect(self._start_llm_format)
+        root.addWidget(self._llm_panel)
+
+        # ── Status bar ────────────────────────────────────────────────────────
         self._status_lbl = QLabel("Ready")
         self.statusBar().addWidget(self._status_lbl, 1)
 
-        # Bootstrap model name from the panel's default
         self._model_name = self._model_panel.current_model()
         self._update_transcribe_btn()
 
-    # ─────────────────────────────────────────── signal handlers ─────────────
+    # ───────────────────────────────────────────── transcription flow ─────────
 
     def _on_model_changed(self, name: str):
         self._model_name = name
@@ -237,7 +247,8 @@ class MainWindow(QMainWindow):
         self._audio_path = ""
         self._update_transcribe_btn()
 
-    # ─────────────────────────────────────────── transcription flow ───────────
+    def _on_output_text_changed(self, has_text: bool):
+        self._llm_panel.set_ready(has_text)
 
     def _update_transcribe_btn(self):
         has_audio = bool(self._audio_path)
@@ -273,34 +284,80 @@ class MainWindow(QMainWindow):
         self._output_panel.clear()
         self._set_status("Starting…")
 
-        self._worker = TranscribeWorker(
+        self._transcribe_worker = TranscribeWorker(
             self._model_name, self._audio_path, device, kwargs, self
         )
-        self._worker.status.connect(self._set_status)
-        self._worker.finished.connect(self._on_done)
-        self._worker.error.connect(self._on_error)
-        self._worker.start()
+        self._transcribe_worker.status.connect(self._set_status)
+        self._transcribe_worker.finished.connect(self._on_transcribe_done)
+        self._transcribe_worker.error.connect(self._on_transcribe_error)
+        self._transcribe_worker.start()
 
     def _cancel_transcription(self):
-        if self._worker and self._worker.isRunning():
-            self._worker.terminate()
-            self._worker.wait(3000)
-        self._finish_up()
+        if self._transcribe_worker and self._transcribe_worker.isRunning():
+            self._transcribe_worker.terminate()
+            self._transcribe_worker.wait(3000)
+        self._transcribe_finish_up()
         self._set_status("Cancelled.")
 
-    def _on_done(self, result: dict):
+    def _on_transcribe_done(self, result: dict):
         self._output_panel.show_result(result)
-        self._finish_up()
+        self._transcribe_finish_up()
         self._set_status("Transcription complete.")
 
-    def _on_error(self, msg: str):
+    def _on_transcribe_error(self, msg: str):
         QMessageBox.critical(self, "Transcription Error", msg)
-        self._finish_up()
+        self._transcribe_finish_up()
         self._set_status(f"Error: {msg[:80]}")
 
-    def _finish_up(self):
+    def _transcribe_finish_up(self):
         self._cancel_btn.hide()
         self._update_transcribe_btn()
+
+    # ──────────────────────────────────────────────── LLM format flow ─────────
+
+    def _start_llm_format(self, preset_prompt: str, extra_instruction: str):
+        raw = self._output_panel.raw_text()
+        if not raw:
+            return
+
+        # Build the final prompt
+        prompt = preset_prompt.replace("{text}", raw)
+        if extra_instruction:
+            prompt += f"\n\nAdditional instruction: {extra_instruction}"
+
+        host = self._llm_panel.current_host()
+        model = self._llm_panel.current_model()
+        if not model:
+            QMessageBox.warning(
+                self,
+                "No Model Selected",
+                "Connect to Ollama and select a model first.",
+            )
+            return
+
+        self._output_panel.begin_streaming()
+        self._llm_panel.set_busy(True)
+        self._set_status(f"Formatting with {model}…")
+
+        self._ollama_worker = OllamaWorker(host, model, prompt, self)
+        self._ollama_worker.chunk_received.connect(self._output_panel.append_chunk)
+        self._ollama_worker.finished.connect(self._on_llm_done)
+        self._ollama_worker.error.connect(self._on_llm_error)
+        self._ollama_worker.start()
+
+    def _on_llm_done(self, full_text: str):
+        self._output_panel.finish_streaming(full_text)
+        self._llm_panel.set_busy(False)
+        self._set_status("Formatting complete.")
+
+    def _on_llm_error(self, msg: str):
+        QMessageBox.critical(self, "Ollama Error", msg)
+        self._llm_panel.set_busy(False)
+        self._set_status(f"Ollama error: {msg[:80]}")
+        # Restore output to original transcription
+        self._output_panel.finish_streaming("")
+
+    # ─────────────────────────────────────────────────────── helpers ──────────
 
     def _set_status(self, msg: str):
         self._status_lbl.setText(msg)
